@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>粒子・星火映像</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #070a12; overflow: hidden; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #ffe9ec; }
+  canvas { display: block; }
+
+  #ui { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+  /* O 键隐藏 UI：整层淡出且不再响应交互（摄像头小窗也一起藏） */
+  #ui.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+  #ui { transition: opacity 0.3s ease; }
+  .panel {
+    pointer-events: auto;
+    background: rgba(14, 18, 30, 0.8);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 190, 120, 0.22);
+    border-radius: 14px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  }
+
+  #hud { position: absolute; left: 20px; top: 20px; padding: 14px 18px; min-width: 240px; }
+  #hud h1 { font-size: 17px; color: #ffcb63; letter-spacing: 1px; }
+  #hud .sub { font-size: 11px; color: #9a8f7a; margin-top: 3px; letter-spacing: 2px; }
+  #hud .keys-hint { margin-top: 9px; font-size: 11px; color: #9a8f7a; letter-spacing: 0.5px; }
+  #hud .keys-hint kbd, #shape-bar kbd {
+    font-family: inherit; font-size: 10.5px; padding: 1px 6px; border-radius: 4px;
+    background: rgba(255,203,99,0.14); border: 1px solid rgba(255,203,99,0.3); color: #ffd98a;
+  }
+  #stat { margin-top: 10px; font-size: 12px; color: #dfc9a8; line-height: 1.85; }
+  #stat b { color: #ffcb63; }
+
+  #tips { position: absolute; left: 50%; bottom: 78px; transform: translateX(-50%); padding: 9px 20px; font-size: 12.5px; color: #c3b49a; white-space: nowrap; }
+  #tips kbd { background: rgba(255,203,99,0.14); border: 1px solid rgba(255,203,99,0.3); border-radius: 4px; padding: 1px 7px; font-size: 11px; color: #ffd98a; font-family: inherit; margin: 0 2px; }
+
+  #status-pill {
+    position: absolute; left: 50%; top: 20px; transform: translateX(-50%);
+    padding: 8px 20px; border-radius: 999px; font-size: 13px; letter-spacing: 1px;
+    opacity: 0; transition: opacity 0.25s; white-space: nowrap;
+  }
+  #status-pill.show { opacity: 1; }
+
+  #gesture-btn {
+    position: absolute; right: 20px; top: 50%; transform: translateY(-50%);
+    padding: 13px 15px; cursor: pointer; font-family: inherit; font-size: 12px;
+    color: #ffd98a; letter-spacing: 1px; writing-mode: vertical-rl; text-align: center;
+    transition: all 0.25s;
+  }
+  #gesture-btn:hover { background: rgba(255,203,99,0.18); }
+  #gesture-btn.on { background: rgba(255,203,99,0.25); color: #fff; border-color: rgba(255,203,99,0.6); }
+
+  /* 底部形态切换栏 */
+  #shape-bar {
+    position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: flex; gap: 3px; padding: 6px; z-index: 30; pointer-events: auto;
+  }
+  #shape-bar button {
+    font-family: inherit; font-size: 12px; letter-spacing: 1px;
+    padding: 8px 15px; border: 0; border-radius: 999px; cursor: pointer;
+    background: transparent; color: #c3b49a; transition: all 0.25s; white-space: nowrap;
+  }
+  #shape-bar button:hover { color: #ffd98a; }
+  #shape-bar button kbd { margin-right: 6px; vertical-align: 1px; }
+  #shape-bar button.on {
+    background: rgba(255,203,99,0.22); color: #fff;
+    box-shadow: 0 0 16px rgba(255,203,99,0.25);
+  }
+
+  #cam { position: absolute; right: 20px; bottom: 20px; width: 210px; height: 158px; border-radius: 12px; overflow: hidden; display: none; }
+  #cam.on { display: block; }
+  #cam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  #cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+
+  #loading {
+    position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: #070a12; transition: opacity 0.6s;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  .ring { width: 52px; height: 52px; border: 3px solid rgba(255,203,99,0.15); border-top-color: #ffcb63; border-radius: 50%; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading .t { margin-top: 16px; font-size: 13px; color: #ffcb63; letter-spacing: 3px; }
+  #loading .s { margin-top: 6px; font-size: 11px; color: #7a6f5c; letter-spacing: 2px; }
+</style>
+</head>
+<body>
+
+<div id="loading"><div class="ring"></div><div class="t">STARFIRE VISION</div><div class="s">初始化粒子引擎…</div></div>
+
+<div id="ui">
+  <div id="hud" class="panel">
+    <h1>粒子・星火映像</h1>
+    <div class="sub">GESTURE PARTICLE SYSTEM</div>
+    <div id="stat"></div>
+    <div class="keys-hint">快捷 <kbd>1</kbd> 五星红旗 · <kbd>2</kbd> 党徽</div>
+  </div>
+
+  <div id="tips" class="panel">
+    <kbd>🎯 切换栏</kbd> 选目标 · <kbd>🫡 敬礼</kbd>/<kbd>F</kbd> 聚成所选 · <kbd>🙌 双手张开</kbd>/<kbd>C</kbd>/<kbd>R</kbd> 粒子团 · <kbd>☝️ 单指</kbd> 旋转 · <kbd>滚轮</kbd> 缩放 · <kbd>鼠标</kbd> 移动视差 / 拖动翻转 · <kbd>O</kbd> 隐藏 UI
+  </div>
+
+  <!-- 底部形态切换栏 -->
+  <div id="shape-bar"></div>
+
+  <!-- 手势诊断：实时显示检测到几只手、各手握取/伸直/抬举状态，便于排查识别失败 -->
+  <div id="debug" class="panel" style="position:absolute;left:20px;top:158px;padding:12px 16px;font-size:11.5px;line-height:1.9;color:#c3b49a;display:none;min-width:210px;">
+    <div style="color:#ffcb63;font-size:11px;letter-spacing:1px;margin-bottom:6px;">识别诊断</div>
+    <div id="dbg-hands">手数：—</div>
+    <div id="dbg-a">手A：—</div>
+    <div id="dbg-b">手B：—</div>
+    <div id="dbg-tip" style="margin-top:6px;color:#8f8570;"></div>
+  </div>
+
+  <button id="gesture-btn" class="panel">✋ 启动手势</button>
+  <button id="cam-toggle" class="panel" style="position:absolute;right:20px;bottom:76px;padding:8px 14px;cursor:pointer;font-family:inherit;font-size:11.5px;color:#ffd98a;letter-spacing:1px;">👁 显示摄像头</button>
+
+  <div id="cam">
+    <video id="cam-video" playsinline muted></video>
+    <canvas id="cam-canvas"></canvas>
+  </div>
+</div>
+
+<!-- 状态提示条：放在 #ui 之外，这样 O 键隐藏 UI 时仍能显示反馈 -->
+<div id="status-pill" class="panel"></div>
+
+<script src="./vendor/three.min.js"></script>
+<script src="./vendor/OrbitControls.iife.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   粒子五星红旗 · 手势交互
+   形态：cloud(默认粒子云) / flag(3D 粒子五星红旗) / emblem(党徽)
+   快捷键：1/2 切换项目（不论当前形态，一律回到对应粒子团） F=聚成所选 C/R=粒子团
+   ═══════════════════════════════════════════════════════════════ */
+
+const PARTICLE_COUNT = 14000;
+const STAR_COUNT = 4200;          // 前 4200 个粒子用于构成五星（含轮廓描边）
+const PALETTE = {
+  flag:   ['#de2910', '#ffde00'],   // 标准国旗红 / 五星黄
+  rose:   ['#ff4d6d', '#ffd6e0'],
+  ocean:  ['#1e6fd9', '#a8e0ff'],
+  violet: ['#8b5cf6', '#e9d5ff'],
+  jade:   ['#10b981', '#d1fae5'],
+};
+
+let colorA = new THREE.Color(PALETTE.flag[0]);   // 旗面
+const EMBLEM_GOLD = new THREE.Color('#ffd24a');  // 党徽专用金
+
+/** 稳定伪随机：同一索引每次得到同一值，避免重建形态时粒子跳变 */
+const rnd = (n) => {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+};
+let colorB = new THREE.Color(PALETTE.flag[1]);   // 五星
+
+/* ── 场景 ── */
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x070a12, 0.010);
+
+const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(0, 0, 74);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+/* ── 鼠标轨道控制：滚轮缩放 / 左键拖动翻转 / 右键平移 ──
+   注意：形态自身的 rotationY/X 由手势驱动，OrbitControls 管的是「相机」，
+   两者互不冲突（一个转物体、一个转视角）。 */
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;         // 阻尼，拖动更顺滑
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.85;
+controls.zoomSpeed = 0.9;
+controls.panSpeed = 0.7;
+controls.minDistance = 22;             // 最近（防止钻进粒子内部）
+controls.maxDistance = 200;            // 最远
+controls.enablePan = true;             // 右键平移
+controls.screenSpacePanning = true;
+controls.target.set(0, 0, 0);
+controls.update();
+
+const glow = new THREE.Mesh(
+  new THREE.SphereGeometry(40, 32, 32),
+  new THREE.MeshBasicMaterial({ color: 0xde2910, transparent: true, opacity: 0.04, side: THREE.BackSide })
+);
+scene.add(glow);
+
+/* ── 粒子缓冲 ── */
+const geo = new THREE.BufferGeometry();
+const colors = new Float32Array(PARTICLE_COUNT * 3);
+const sizes = new Float32Array(PARTICLE_COUNT);
+const seeds = new Float32Array(PARTICLE_COUNT);
+const targetPos = new Float32Array(PARTICLE_COUNT * 3);
+const currentPos = new Float32Array(PARTICLE_COUNT * 3);
+
+let currentShape = 'cloud';
+let targetShape = 'flag';         // 敬礼「聚合」的目标形态 = 用户在切换栏所选（手势与形态解耦）
+let manualLockUntil = 0;          // 手动切换形态后的手势锁（ms，performance.now 基准）
+let flagMix = 0;              // 0=云 1=旗，用于着色器飘动过渡
+let driftMix = 1;             // 漂浮幅度混合（党徽用低值凝实轮廓）
+let rotationY = 0, rotationX = 0;
+let targetRotY = 0, targetRotX = 0;
+
+/* ── 鼠标视差：指针位置 → 整片粒子几何体的轻微倾斜 ──
+   clientX/Y 归一化到 -1…1，主循环里做阻尼跟随；
+   幅度很小，只做「跟手」的微倾，不干扰手势旋转与相机轨道。 */
+let mouseNX = 0, mouseNY = 0;      // 指针归一化位置
+let tiltX = 0, tiltY = 0;          // 当前视差倾斜量（弧度）
+addEventListener('pointermove', (e) => {
+  mouseNX = (e.clientX / innerWidth) * 2 - 1;
+  mouseNY = (e.clientY / innerHeight) * 2 - 1;
+});
+
+/* ═══════════ 五星红旗几何 ═══════════
+   旗面 60×40（比例 3:2），按国标 30×20 网格定位：
+   大星 圆心(5,5) 外接圆半径3格；四个小星 半径1格，圆心(10,2)(12,4)(12,7)(10,9)
+   1 格 = 2 世界单位
+*/
+const FW = 60, FH = 40, G = 2;
+const BIG = { cx: -FW / 2 + 5 * G, cy: FH / 2 - 5 * G, R: 3 * G, angle0: Math.PI / 2 };
+const BIG_V = (() => {
+  const v = [];
+  for (let i = 0; i < 10; i++) {
+    const a = BIG.angle0 + (i * Math.PI) / 5;
+    const r = i % 2 === 0 ? BIG.R : BIG.R * 0.38197;
+    v.push([BIG.cx + Math.cos(a) * r, BIG.cy + Math.sin(a) * r]);
+  }
+  return v;
+})();
+
+const SMALL = [
+  { gx: 10, gy: 2 }, { gx: 12, gy: 4 }, { gx: 12, gy: 7 }, { gx: 10, gy: 9 },
+].map((s) => {
+  const cx = -FW / 2 + s.gx * G, cy = FH / 2 - s.gy * G, R = 1 * G;
+  // 小星有一个角正对大星圆心
+  const angle0 = Math.atan2(BIG.cy - cy, BIG.cx - cx);
+  const v = [];
+  for (let i = 0; i < 10; i++) {
+    const a = angle0 + (i * Math.PI) / 5;
+    const r = i % 2 === 0 ? R : R * 0.38197;
+    v.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+  }
+  return { cx, cy, R, poly: v };
+});
+const ALL_STARS = [{ poly: BIG_V, cx: BIG.cx, cy: BIG.cy, R: BIG.R }, ...SMALL];
+
+/** 射线法：点是否在多边形内 */
+function pip(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** 在星形内采样一点（拒绝采样） */
+function sampleStar(star, out) {
+  const { cx, cy, R, poly } = star;
+  for (let t = 0; t < 40; t++) {
+    const x = cx + (Math.random() - 0.5) * 2 * R;
+    const y = cy + (Math.random() - 0.5) * 2 * R;
+    if (pip(x, y, poly)) { out[0] = x; out[1] = y; return true; }
+  }
+  out[0] = cx; out[1] = cy;
+  return false;
+}
+
+/** 在旗面内采样一点，且不在任何星内 */
+function sampleField(out) {
+  for (let t = 0; t < 40; t++) {
+    const x = (Math.random() - 0.5) * FW;
+    const y = (Math.random() - 0.5) * FH;
+    let inStar = false;
+    for (const s of ALL_STARS) {
+      if (Math.hypot(x - s.cx, y - s.cy) < s.R * 1.25 && pip(x, y, s.poly)) { inStar = true; break; }
+    }
+    if (!inStar) { out[0] = x; out[1] = y; return; }
+  }
+  out[0] = (Math.random() - 0.5) * FW;
+  out[1] = (Math.random() - 0.5) * FH;
+}
+
+/** 沿星形轮廓采样一点（沿 10 条边按长度加权随机走，带极细抖动）→ 让边界锐利 */
+function sampleStarEdge(star, out) {
+  const poly = star.poly;
+  const lens = [];
+  let total = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    lens.push(L); total += L;
+  }
+  let r = Math.random() * total;
+  let ei = 0;
+  for (let i = 0; i < lens.length; i++) { r -= lens[i]; if (r <= 0) { ei = i; break; } }
+  const a = poly[ei], b = poly[(ei + 1) % poly.length];
+  const t = Math.random();
+  const nx = -(b[1] - a[1]) / (lens[ei] || 1);
+  const ny = (b[0] - a[0]) / (lens[ei] || 1);
+  const j = (Math.random() - 0.5) * 0.36;
+  out[0] = a[0] + (b[0] - a[0]) * t + nx * j;
+  out[1] = a[1] + (b[1] - a[1]) * t + ny * j;
+}
+
+// 大星与小星的粒子配额：大幅提高，描边占 62% 让轮廓清晰
+const EDGE_RATIO = 0.62;
+const BIG_N = 2600;
+const SMALL_N = [400, 400, 400, 400];   // 2600+1600 = 4200 = STAR_COUNT
+
+/** 粒子索引 → 所属星（仅前 STAR_COUNT 个） */
+function starOfIndex(i) {
+  if (i < BIG_N) return ALL_STARS[0];
+  let acc = BIG_N;
+  for (let k = 0; k < SMALL_N.length; k++) {
+    if (i < acc + SMALL_N[k]) return ALL_STARS[k + 1];
+    acc += SMALL_N[k];
+  }
+  return ALL_STARS[ALL_STARS.length - 1];
+}
+
+function makeFlag(i, out) {
+  if (i < STAR_COUNT) {
+    const st = starOfIndex(i);
+    // 描边粒子在前（每颗星的前 EDGE_RATIO 部分），内部填充在后
+    const withinStar = i < BIG_N ? i : i - BIG_N;
+    const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / 400))];
+    const local = withinStar - Math.floor(withinStar / segLen) * segLen;
+    if (local < segLen * EDGE_RATIO) sampleStarEdge(st, out);
+    else sampleStar(st, out);
+    out[2] = (Math.random() - 0.5) * 3.4;      // 星的厚度 → 立体
+  } else {
+    sampleField(out);
+    out[2] = (Math.random() - 0.5) * 2.6;      // 旗面厚度
+  }
+}
+
+/* ═══════════ 粒子团（散开态） ═══════════
+   手势「双手张开」时粒子散成松散的粒子团，这是唯一的非实体形态。 */
+function makeCloud(i, out) {
+  const shell = Math.random() < 0.7;
+  const r = shell ? (30 + (Math.random() - 0.5) * 3) : 30 * Math.cbrt(Math.random());
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  out[0] = r * Math.sin(phi) * Math.cos(theta);
+  out[1] = r * Math.sin(phi) * Math.sin(theta);
+  out[2] = r * Math.cos(phi);
+}
+
+/* ═══════════ 党徽（中国共产党党徽 · 镰刀锤头） ═══════════
+   轮廓数据内嵌在代码中（120×120 掩码 + 游程编码压缩，仅 870 个数字），
+   **不依赖任何外部图片文件** —— 因此 file:// 双击打开、或 HTTP 打开都可用。
+   （曾经用 assets/party-emblem.png 加载，但 file:// 下浏览器会拦截本地图片，
+   导致掩码为空退化成球体——这正是「我这边正常、你那边是粒子团」的原因）
+*/
+
+// 党徽轮廓掩码：120×120，游程编码 [值,重复次数,...]
+const EMBLEM_T = 120;
+const EMBLEM_RLE = [0,661,1,3,0,118,1,10,0,112,1,12,0,110,1,13,0,109,1,14,0,108,1,14,0,107,1,15,0,107,1,15,0,106,1,15,0,107,1,15,0,106,1,15,0,106,1,16,0,105,1,16,0,105,1,16,0,84,1,1,0,20,1,16,0,82,1,3,0,20,1,16,0,79,1,6,0,20,1,16,0,76,1,9,0,20,1,16,0,62,1,5,0,3,1,15,0,20,1,16,0,60,1,25,0,19,1,17,0,58,1,27,0,19,1,17,0,56,1,29,0,19,1,17,0,54,1,31,0,18,1,18,0,52,1,31,0,20,1,17,0,51,1,31,0,22,1,17,0,49,1,32,0,22,1,18,0,47,1,32,0,24,1,17,0,46,1,32,0,25,1,18,0,44,1,32,0,27,1,17,0,43,1,32,0,28,1,18,0,41,1,32,0,30,1,17,0,40,1,32,0,31,1,18,0,38,1,32,0,33,1,18,0,36,1,32,0,34,1,18,0,35,1,32,0,35,1,18,0,34,1,32,0,37,1,18,0,32,1,32,0,38,1,18,0,31,1,33,0,38,1,18,0,30,1,35,0,38,1,18,0,28,1,37,0,37,1,18,0,27,1,39,0,36,1,18,0,26,1,41,0,35,1,19,0,24,1,43,0,35,1,18,0,23,1,45,0,34,1,18,0,22,1,47,0,33,1,18,0,22,1,48,0,32,1,18,0,23,1,48,0,31,1,19,0,23,1,48,0,30,1,19,0,24,1,48,0,29,1,19,0,25,1,48,0,28,1,19,0,26,1,48,0,28,1,18,0,27,1,19,0,2,1,27,0,27,1,18,0,28,1,17,0,4,1,27,0,26,1,18,0,29,1,15,0,6,1,27,0,25,1,18,0,30,1,13,0,8,1,27,0,24,1,18,0,31,1,11,0,10,1,27,0,22,1,19,0,32,1,9,0,12,1,27,0,21,1,19,0,33,1,7,0,14,1,27,0,20,1,19,0,34,1,5,0,16,1,27,0,19,1,19,0,35,1,3,0,18,1,27,0,18,1,19,0,36,1,1,0,20,1,27,0,17,1,19,0,58,1,27,0,16,1,19,0,59,1,27,0,14,1,20,0,60,1,27,0,13,1,20,0,61,1,27,0,12,1,20,0,62,1,27,0,11,1,19,0,64,1,27,0,9,1,20,0,65,1,27,0,8,1,20,0,66,1,27,0,7,1,20,0,67,1,27,0,5,1,20,0,69,1,27,0,4,1,20,0,70,1,27,0,2,1,21,0,71,1,49,0,72,1,47,0,25,1,1,0,48,1,46,0,24,1,3,0,48,1,44,0,24,1,5,0,48,1,43,0,23,1,7,0,48,1,42,0,22,1,9,0,48,1,40,0,22,1,12,0,47,1,39,0,21,1,14,0,47,1,37,0,21,1,17,0,46,1,36,0,20,1,19,0,46,1,34,0,21,1,21,0,45,1,33,0,22,1,21,0,45,1,31,0,24,1,22,0,44,1,29,0,26,1,23,0,42,1,29,0,27,1,25,0,38,1,30,0,27,1,27,0,34,1,33,0,27,1,30,0,27,1,37,0,27,1,33,0,20,1,41,0,27,1,40,0,5,1,49,0,26,1,95,0,20,1,101,0,17,1,104,0,15,1,106,0,13,1,108,0,12,1,107,0,12,1,107,0,13,1,17,0,2,1,87,0,14,1,17,0,4,1,84,0,15,1,17,0,6,1,61,0,3,1,17,0,16,1,17,0,7,1,59,0,5,1,15,0,17,1,17,0,9,1,55,0,8,1,13,0,18,1,16,0,12,1,51,0,11,1,11,0,19,1,16,0,14,1,47,0,14,1,9,0,21,1,14,0,18,1,42,0,17,1,7,0,23,1,13,0,21,1,36,0,21,1,5,0,25,1,11,0,25,1,29,0,26,1,3,0,28,1,7,0,32,1,19,0,32,1,1,0,618];
+
+// 解码 RLE → Uint8Array 掩码，并算出包围盒（只跑一次）
+const EMBLEM = (() => {
+  const mask = new Uint8Array(EMBLEM_T * EMBLEM_T);
+  let p = 0;
+  for (let i = 0; i < EMBLEM_RLE.length; i += 2) {
+    const v = EMBLEM_RLE[i], c = EMBLEM_RLE[i + 1];
+    for (let k = 0; k < c; k++) if (p < mask.length) mask[p++] = v;
+  }
+  let minX = EMBLEM_T, maxX = 0, minY = EMBLEM_T, maxY = 0, hits = 0;
+  for (let y = 0; y < EMBLEM_T; y++) {
+    for (let x = 0; x < EMBLEM_T; x++) {
+      if (mask[y * EMBLEM_T + x]) {
+        hits++;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return {
+    mask,
+    hits,
+    u0: minX / EMBLEM_T, v0: minY / EMBLEM_T,
+    u1: maxX / EMBLEM_T, v1: maxY / EMBLEM_T,
+  };
+})();
+
+/** 党徽形态：拒绝采样 —— 在包围盒内随机撒点，命中掩码即保留。
+    密度按「面积」自然均匀，不受轮廓点顺序/疏密影响。 */
+function makePartyEmblem(i, out) {
+  const { mask, u0, v0, u1, v1 } = EMBLEM;
+  if (!EMBLEM.hits) return;   // 理论上不会发生（数据内嵌）
+  let u = 0.5, v = 0.5;
+  for (let k = 0; k < 60; k++) {
+    u = u0 + Math.random() * (u1 - u0);
+    v = v0 + Math.random() * (v1 - v0);
+    const gx = Math.min(EMBLEM_T - 1, (u * EMBLEM_T) | 0);
+    const gy = Math.min(EMBLEM_T - 1, (v * EMBLEM_T) | 0);
+    if (mask[gy * EMBLEM_T + gx]) break;   // 命中党徽区域
+  }
+  // 归一化 → 世界坐标：以包围盒中心为原点，整体直径 60
+  const cx = (u0 + u1) / 2, cy = (v0 + v1) / 2;
+  const S = 60;
+  out[0] = (u - cx) * S;
+  out[1] = (cy - v) * S;                          // 图像 y 向下 → three.js y 向上
+  out[2] = (Math.random() - 0.5) * 2.6;           // 微厚度 → 立体感
+}
+
+/* 各形态首次生成后的粒子排列缓存：
+   来回切换时复用同一份排列，不再每次重新随机 ——
+   保证「粒子团 / 国旗 / 党徽」各自的初始状态在切换前后不被改变。 */
+const shapePosCache = Object.create(null);
+
+function buildShape(shape) {
+  if (shapePosCache[shape]) { targetPos.set(shapePosCache[shape]); return; }
+  const tmp = [0, 0, 0];
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    if (shape === 'flag') makeFlag(i, tmp);
+    else if (shape === 'emblem') makePartyEmblem(i, tmp);
+    else makeCloud(i, tmp);          // cloud = 散开态粒子团
+    targetPos[i * 3] = tmp[0];
+    targetPos[i * 3 + 1] = tmp[1];
+    targetPos[i * 3 + 2] = tmp[2];
+  }
+  shapePosCache[shape] = Float32Array.from(targetPos);
+}
+
+// 初始：粒子云
+buildShape('cloud');
+
+// 党徽轮廓已内嵌（EMBLEM），无需任何异步加载 —— 切换即刻可用
+for (let i = 0; i < PARTICLE_COUNT * 3; i++) currentPos[i] = targetPos[i];
+
+/* ── 颜色 ── */
+function recolor() {
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    let c;
+    if (currentShape === 'flag') {
+      c = i < STAR_COUNT ? colorB.clone() : colorA.clone();
+      // 描边粒子提亮，让轮廓更醒目；填充与旗面保持轻微明暗颗粒感
+      const withinStar = i < BIG_N ? i : i - BIG_N;
+      const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / 400))];
+      const local = withinStar - Math.floor(withinStar / segLen) * segLen;
+      if (i < STAR_COUNT && local < segLen * EDGE_RATIO) c.multiplyScalar(1.25 + Math.random() * 0.25);
+      else c.multiplyScalar(0.86 + Math.random() * 0.28);
+    } else if (currentShape === 'emblem') {
+      // 党徽：专用金色，不与旗红混合（明暗颗粒感保留）
+      c = EMBLEM_GOLD.clone().multiplyScalar(0.82 + Math.random() * 0.4);
+    } else if (currentShape === 'cloud' && targetShape === 'emblem') {
+      // 党徽散开后的粒子团：保持纯金，避免出现红黄相交
+      c = EMBLEM_GOLD.clone().multiplyScalar(0.78 + Math.random() * 0.45);
+    } else {
+      c = colorA.clone().lerp(colorB, Math.random() * 0.85);
+    }
+    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+  }
+  if (geo.attributes.color) geo.attributes.color.needsUpdate = true;
+  if (glow && glow.material) glow.material.color.set(colorA);
+}
+
+recolor();
+for (let i = 0; i < PARTICLE_COUNT; i++) {
+  if (i < STAR_COUNT) {
+    // 描边粒子更小更集中 → 线条锐利；内部填充稍大 → 星体饱满
+    const withinStar = i < BIG_N ? i : i - BIG_N;
+    const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / 400))];
+    const local = withinStar - Math.floor(withinStar / segLen) * segLen;
+    sizes[i] = local < segLen * EDGE_RATIO ? 0.42 + Math.random() * 0.5 : 0.6 + Math.random() * 0.9;
+  } else {
+    sizes[i] = 0.55 + Math.random() * 1.35;   // 旗面
+  }
+  seeds[i] = Math.random() * Math.PI * 2;
+}
+
+geo.setAttribute('position', new THREE.BufferAttribute(currentPos, 3));
+geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+geo.setAttribute('seed', new THREE.BufferAttribute(seeds, 1));
+
+const mat = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uPixelRatio: { value: Math.min(devicePixelRatio, 2) },
+    uFlag: { value: 0 },
+    uDrift: { value: 1 },        // 漂浮/闪烁幅度：1=默认，0.25=凝实（用于党徽等需清晰轮廓的形态）
+  },
+  vertexShader: `
+    attribute float size;
+    attribute float seed;
+    varying vec3 vColor;
+    varying float vTwinkle;
+    uniform float uTime;
+    uniform float uPixelRatio;
+    uniform float uFlag;
+    uniform float uDrift;
+    void main() {
+      vColor = color;
+      vTwinkle = 0.6 + 0.4 * sin(uTime * 1.7 + seed * 3.1);
+      vec3 p = position;
+      // 呼吸漂浮（幅度受 uDrift 控制）
+      p.x += sin(uTime * 0.55 + seed) * 0.6 * uDrift;
+      p.y += cos(uTime * 0.48 + seed * 1.7) * 0.6 * uDrift;
+      p.z += sin(uTime * 0.40 + seed * 2.3) * 0.45 * uDrift;
+      // 旗帜飘动：越靠自由端（右侧）摆幅越大
+      float edge = smoothstep(-30.0, 30.0, p.x);
+      p.z += sin(p.x * 0.085 + uTime * 2.2) * 3.8 * edge * uFlag;
+      p.y += cos(p.x * 0.065 + uTime * 1.7) * 1.5 * edge * uFlag;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_PointSize = size * uPixelRatio * (300.0 / -mv.z);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vColor;
+    varying float vTwinkle;
+    void main() {
+      vec2 d = gl_PointCoord - vec2(0.5);
+      float alpha = smoothstep(0.5, 0.0, length(d));
+      alpha *= alpha;
+      gl_FragColor = vec4(vColor * (0.5 + vTwinkle * 0.8), alpha * vTwinkle);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  vertexColors: true,
+});
+
+const points = new THREE.Points(geo, mat);
+scene.add(points);
+
+/* ── HUD ── */
+const statEl = document.getElementById('stat');
+const SHAPES = [
+  { id: 'cloud',  name: '粒子团'   },
+  { id: 'flag',   name: '五星红旗' },
+  { id: 'emblem', name: '党徽'     },
+];
+const NAMES = Object.fromEntries(SHAPES.map(s => [s.id, s.name]));
+function updateStat() {
+  statEl.innerHTML =
+    `形态 <b>${NAMES[currentShape]}</b> · 粒子 <b>${PARTICLE_COUNT}</b><br>` +
+    `旋转 <b>Y ${(rotationY * 57.3).toFixed(0)}° / X ${(rotationX * 57.3).toFixed(0)}°</b>`;
+}
+
+function setShape(shape) {
+  if (currentShape === shape) return;
+  currentShape = shape;
+  buildShape(shape);
+  recolor();
+  updateStat();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   手势识别
+   ═══════════════════════════════════════════════════════════════ */
+const camWrap = document.getElementById('cam');
+const camVideo = document.getElementById('cam-video');
+const camCanvas = document.getElementById('cam-canvas');
+const camCtx = camCanvas.getContext('2d');
+const pill = document.getElementById('status-pill');
+
+let hands = null, mpCamera = null, gestureOn = false;
+
+function showPill(text) {
+  pill.textContent = text;
+  pill.classList.add('show');
+  clearTimeout(showPill._t);
+  showPill._t = setTimeout(() => pill.classList.remove('show'), 1700);
+}
+
+const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/**
+ * 敬礼判定难点：与「五指并拢伸直」相近。
+ * 方案：四指伸直 + 手指并拢(spread 低) + 手腕抬高(y 小) → salute
+ */
+function analyze(lm) {
+  const thumb = lm[4], index = lm[8], middle = lm[12], ring = lm[16], pinky = lm[20];
+  const wrist = lm[0], indexMcp = lm[5];
+  const handSize = dist2(wrist, indexMcp) || 0.1;
+
+  // 张开度：四指尖沿「垂直于手腕→食指MCP 连线」方向的分散度（不含拇指，
+  // 拇指天然偏在一侧，纳入会污染"并拢/张开"的判定）
+  const tips = [index, middle, ring, pinky];
+  // 张开度：指尖沿「垂直于手腕→食指MCP 连线」方向的分散度。
+  // 手指伸直时指尖沿主轴排开，主轴方向分散天然很大，故必须取正交方向的分量，
+  // 才能真正区分「并拢伸直（敬礼）」与「张开五指」。
+  const ax = indexMcp.x - wrist.x, ay = indexMcp.y - wrist.y;
+  const alen = Math.hypot(ax, ay) || 0.1;
+  const ux = ax / alen, uy = ay / alen;   // 主轴单位向量
+  const px = -uy, py = ux;                // 正交（横向）单位向量
+  let sum = 0, cnt = 0;
+  for (let a = 0; a < tips.length; a++)
+    for (let b = a + 1; b < tips.length; b++) {
+      const dx = tips[a].x - tips[b].x, dy = tips[a].y - tips[b].y;
+      sum += Math.abs(dx * px + dy * py);   // 只取横向分量
+      cnt++;
+    }
+  const rawSpread = (sum / cnt) / handSize;
+
+  // 伸直的四指（不含拇指）
+  const pairs = [[index, lm[6]], [middle, lm[10]], [ring, lm[14]], [pinky, lm[18]]];
+  const ext = pairs.map(([tip, p]) => (dist2(tip, wrist) > dist2(p, wrist) * 1.12 ? 1 : 0));
+  const extCount = ext.reduce((a, b) => a + b, 0);
+
+  const raised = wrist.y < 0.55;   // 手举到头部高度（画面上 55% 以上，比 45% 宽松）
+
+  let gesture = 'none';
+  if (extCount === 1 && ext[0] === 1) gesture = 'point';        // 仅食指
+  else if (extCount >= 3 && rawSpread < 0.80 && raised) gesture = 'salute';
+  else if (extCount >= 4 && rawSpread > 1.05) gesture = 'open';  // 五指张开
+  else if (rawSpread > 1.05) gesture = 'open';
+
+  return { gesture, rawSpread, extCount, raised, indexTip: index };
+}
+
+let lastGesture = 'none', stable = 0;
+
+function onResults(res) {
+  camCanvas.width = camVideo.videoWidth || 320;
+  camCanvas.height = camVideo.videoHeight || 240;
+  camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
+
+  const lms = res.multiHandLandmarks;
+  if (!lms || !lms.length) { showPill('未检测到手'); return; }
+  const lm = lms[0];
+
+  // 骨架（支持双手，视觉反馈）
+  camCtx.strokeStyle = 'rgba(255,203,99,0.9)';
+  camCtx.lineWidth = 2;
+  const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  lms.forEach((hand) => {
+    BONES.forEach(([a, b]) => {
+      camCtx.beginPath();
+      camCtx.moveTo(hand[a].x * camCanvas.width, hand[a].y * camCanvas.height);
+      camCtx.lineTo(hand[b].x * camCanvas.width, hand[b].y * camCanvas.height);
+      camCtx.stroke();
+    });
+  });
+
+  const { gesture, indexTip } = analyze(lm);
+
+  // 诊断面板：实时反馈检测状态
+  const dbg = document.getElementById('debug');
+  const dA = document.getElementById('dbg-a');
+  const dB = document.getElementById('dbg-b');
+  const dH = document.getElementById('dbg-hands');
+  const dT = document.getElementById('dbg-tip');
+  const lmsAll = res.multiHandLandmarks || [];
+  dH.textContent = `手数：${lmsAll.length}`;
+  const gA = lmsAll[0] ? analyze(lmsAll[0]) : null;
+  const gB = lmsAll[1] ? analyze(lmsAll[1]) : null;
+  const fmt = (g) => g ? `伸直 ${g.extCount}/4 · 散开 ${g.rawSpread.toFixed(2)} · 抬手 ${g.raised ? '是' : '否'} · ${g.gesture}` : '—';
+  dA.textContent = `手A：${fmt(gA)}`;
+  dB.textContent = `手B：${fmt(gB)}`;
+  dT.textContent = lmsAll.length >= 2
+    ? (gA.extCount >= 4 && gB.extCount >= 4 ? '✅ 双手已张开' : '⏳ 双手都需 4 指伸直')
+    : lmsAll.length === 1 ? '⏳ 需两只手同时在画面内' : '⏳ 未检测到手';
+
+  /* 单指 → 控制旋转朝向（不受互斥锁影响：旋转任何时候都可用） */
+  if (gesture === 'point') {
+    targetRotY = (indexTip.x - 0.5) * 2.4;
+    targetRotX = (indexTip.y - 0.5) * 1.3;
+  }
+
+  /* ── 互斥锁：手动切换形态后 4 秒内，手势只做旋转、不改形态 ──
+     否则摄像头一旦判定为「张开」就会立刻把切换栏选的形态打回粒子团，
+     表现为「切到党徽又变回粒子团」。 */
+  if (performance.now() < manualLockUntil) return;
+
+  /* ── 双手五指张开 → 散回粒子团（优先级最高） ──
+     判定放宽：两只手都检出 + 每只手四指都伸直（extCount>=4）。
+     真实摄像头下两只手很难同时张得一样满，任一阈值卡太严都会整体失效。 */
+  if (lmsAll.length >= 2) {
+    const aOpen = gA.extCount >= 4;
+    const bOpen = gB.extCount >= 4;
+    if (aOpen && bOpen) {
+      if (currentShape !== 'cloud') {
+        setShape('cloud');
+        showPill('🙌 双手张开 · 散回粒子团');
+      }
+      lastGesture = 'twoOpen'; stable = 0;
+      return;
+    }
+    // 未判定为双手张开时，不阻断后续单手判定（敬礼/单指仍需可用）
+  }
+
+  /* 兜底：只检出 1 只手但四指伸直且手指分开时也散开。
+     用「伸直 + 散开度」区分敬礼（敬礼同样四指伸直，但并拢、散开度低）。
+     必须放在敬礼/单指判定之前执行，故用散开阈值排除敬礼。 */
+  if (lmsAll.length === 1 && gA.extCount >= 4 && gA.rawSpread > 1.0) {
+    if (currentShape !== 'cloud') {
+      setShape('cloud');
+      showPill('✋ 张开 · 散回粒子团');
+    }
+    lastGesture = 'oneOpen'; stable = 0;
+    return;
+  }
+
+  if (gesture !== lastGesture) { lastGesture = gesture; stable = 0; } else { stable++; }
+
+  if (stable === 4) {
+    if (gesture === 'salute') {
+      // 敬礼 = 通用「聚合」指令：聚到切换栏当前选中的形态，而非固定五星红旗
+      setShape(targetShape);
+      showPill('🫡 敬礼 · 聚成「' + NAMES[targetShape] + '」');
+      // 同步切换栏高亮（聚合后形态变了）
+      const bar = document.getElementById('shape-bar');
+      if (bar) [...bar.children].forEach(x => x.classList.toggle('on', x.dataset.id === targetShape));
+    } else if (gesture === 'point') {
+      showPill('☝️ 单指 · 控制旋转');
+    }
+    updateStat();
+  }
+}
+
+/* ── 启动 / 关闭 ── */
+async function startGesture() {
+  if (gestureOn) {
+    gestureOn = false;
+    if (mpCamera) { try { mpCamera.stop(); } catch (e) {} }
+    if (camVideo.srcObject) { camVideo.srcObject.getTracks().forEach(t => t.stop()); camVideo.srcObject = null; }
+    camWrap.classList.remove('on');
+    gestureBtn.classList.remove('on');
+    gestureBtn.textContent = '✋ 启动手势';
+    document.getElementById('debug').style.display = 'none';
+    showPill('手势已关闭');
+    return;
+  }
+  try {
+    gestureOn = true;
+    gestureBtn.classList.add('on');
+    gestureBtn.textContent = '✋ 手势开启中';
+    document.getElementById('debug').style.display = 'block';
+    showPill('加载模型…');
+    hands = new Hands({
+      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`,
+    });
+    // 回退到已验证可用的配置：轻量模型 + 低分辨率。
+    // （曾尝试 modelComplexity:1 / 640×480 提升双手检测，实际导致识别整体失效）
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.45 });
+    hands.onResults(onResults);
+    mpCamera = new Camera(camVideo, {
+      onFrame: async () => { if (gestureOn && hands) await hands.send({ image: camVideo }); },
+      width: 320, height: 240,
+    });
+    await mpCamera.start();
+    showPill('✋ 手势已开启 · 请抬手');
+  } catch (e) {
+    gestureOn = false;
+    camWrap.classList.remove('on');
+    gestureBtn.classList.remove('on');
+    gestureBtn.textContent = '✋ 启动手势';
+    showPill('⚠ 启动失败 ' + String(e.message || e).slice(0, 30));
+  }
+}
+
+const gestureBtn = document.getElementById('gesture-btn');
+gestureBtn.addEventListener('click', startGesture);
+
+// 摄像头预览开关：小窗默认隐藏，排查识别失败时可打开确认画面
+const camToggle = document.getElementById('cam-toggle');
+camToggle.addEventListener('click', () => {
+  const on = camWrap.classList.toggle('on');
+  camToggle.textContent = on ? '👁 隐藏摄像头' : '👁 显示摄像头';
+});
+
+/* ── 底部形态切换栏 ──
+   语义：栏上只列实体形态（五星红旗/党徽），点击 = **选中聚合目标**，不立即切换形态，
+   画面保持粒子团；之后敬礼或按 F 才聚成所选形态。
+   想回到粒子团：双手张开 / 按 C / 按 R。
+   键盘 1 / 2 = 快捷切换项目：不论当前是什么形态，切换完都回到该项目对应的粒子团
+   （国旗→红黄粒子团 / 党徽→金色粒子团），再由敬礼或 F 聚成。 */
+const shapeBar = document.getElementById('shape-bar');
+
+/** 统一入口（切换栏 / 键盘 1·2 共用）：
+    不论当前形态，切换后一律回到所选项目对应的粒子团初始态。 */
+function chooseShape(id) {
+  targetShape = id;
+  manualLockUntil = performance.now() + 4000;   // 4 秒内不让手势把形态打回粒子团
+  if (currentShape !== 'cloud') setShape('cloud');   // 已聚形 → 散回粒子团
+  else recolor();                                    // 本来就是粒子团 → 切到对应配色
+  [...shapeBar.children].forEach(x => x.classList.toggle('on', x.dataset.id === id));
+  showPill('🎯 已切换到「' + NAMES[id] + '」粒子团 · 敬礼或按 F 聚成');
+}
+
+SHAPES.filter(s => s.id !== 'cloud').forEach(s => {
+  const b = document.createElement('button');
+  const hint = document.createElement('kbd');
+  hint.textContent = s.id === 'flag' ? '1' : '2';
+  b.appendChild(hint);
+  b.appendChild(document.createTextNode(s.name));
+  b.dataset.id = s.id;
+  // 高亮 = 当前聚合目标（不是当前显示形态）
+  if (s.id === targetShape) b.classList.add('on');
+  b.addEventListener('click', () => chooseShape(s.id));
+  shapeBar.appendChild(b);
+});
+
+// 键盘兜底：1=五星红旗 2=党徽（不论当前形态，切换后都回到对应粒子团）  F=聚成所选  C/R=粒子团
+addEventListener('keydown', (e) => {
+  // 1 / 2 = 快捷切换项目（主键盘与数字小键盘都认）
+  if (e.key === '1' || e.code === 'Digit1' || e.code === 'Numpad1') {
+    chooseShape('flag');
+  }
+  if (e.key === '2' || e.code === 'Digit2' || e.code === 'Numpad2') {
+    chooseShape('emblem');
+  }
+  // 键盘兜底：F=聚合到切换栏所选形态  C=散回粒子团（手势难识别时可用）
+  if (e.key === 'f' || e.key === 'F') {
+    manualLockUntil = performance.now() + 4000;
+    setShape(targetShape);
+    const bar0 = document.getElementById('shape-bar');
+    if (bar0) [...bar0.children].forEach(x => x.classList.toggle('on', x.dataset.id === targetShape));
+    showPill('🫡 键盘 · 聚成「' + NAMES[targetShape] + '」');
+  }
+  if (e.key === 'c' || e.key === 'C') {
+    manualLockUntil = performance.now() + 4000;
+    setShape('cloud');
+    showPill('✋ 键盘 · 散回粒子团');
+  }
+  // R = 一键回到初始状态：相机归位、物体旋转归零、形态回到粒子团（页面加载时的初始态）
+  if (e.key === 'r' || e.key === 'R') {
+    // 相机：位置/目标/缩放全部复位（OrbitControls 会同步内部球坐标）
+    controls.target.set(0, 0, 0);
+    camera.position.set(0, 0, 74);
+    controls.update();
+    // 物体自身旋转（手势驱动的那套）归零
+    targetRotY = 0;
+    targetRotX = 0;
+    points.rotation.set(0, 0, 0);
+    // 鼠标视差一并归零（R 之后指针不动时恢复正对）
+    mouseNX = 0; mouseNY = 0; tiltX = 0; tiltY = 0;
+    // 形态：回到页面加载时的初始态 = 粒子团
+    setShape('cloud');
+    const bar1 = document.getElementById('shape-bar');
+    if (bar1) [...bar1.children].forEach(x => x.classList.toggle('on', x.dataset.id === targetShape));
+    updateStat();
+    showPill('🔄 已重置 · 视角 / 旋转 / 形态（粒子团）');
+  }
+  // O = 隐藏 / 显示 UI 界面（投影或录屏时干净画面）
+  if (e.key === 'o' || e.key === 'O') {
+    const ui = document.getElementById('ui');
+    const nowHidden = ui.classList.toggle('hidden');
+    // 隐藏时提示也看不到，所以先恢复可见再显示状态，1.4s 后自动淡出
+    if (nowHidden) {
+      showPill('👁 UI 已隐藏（再按 O 恢复）');
+    } else {
+      showPill('👁 UI 已显示');
+    }
+  }
+});
+
+/* ── 主循环 ── */
+const clock = new THREE.Clock();
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  mat.uniforms.uTime.value = clock.elapsedTime;
+
+  // 形态过渡（吸附感）
+  const k = 1 - Math.pow(0.0018, dt);
+  const arr = geo.attributes.position.array;
+  for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+    arr[i] += (targetPos[i] - arr[i]) * k;
+  }
+  geo.attributes.position.needsUpdate = true;
+
+  // 飘动开关过渡
+  const targetMix = currentShape === 'flag' ? 1 : 0;
+  flagMix += (targetMix - flagMix) * (1 - Math.pow(0.02, dt));
+  mat.uniforms.uFlag.value = flagMix;
+
+  // 党徽等轮廓型形态：降低漂浮幅度让边缘凝实（过渡平滑）
+  const targetDrift = currentShape === 'emblem' ? 0.22 : 1;
+  driftMix += (targetDrift - driftMix) * (1 - Math.pow(0.02, dt));
+  mat.uniforms.uDrift.value = driftMix;
+
+  // 鼠标视差倾斜：指针移动时整片粒子轻微跟倾（阻尼跟随，上下≈5° 左右≈7°）
+  const TILT_X = 0.085, TILT_Y = 0.125;
+  tiltX += (mouseNY * TILT_X - tiltX) * 0.055;
+  tiltY += (mouseNX * TILT_Y - tiltY) * 0.055;
+
+  rotationY += (targetRotY - rotationY) * 0.10;
+  rotationX += (targetRotX - rotationX) * 0.10;
+  points.rotation.y += (rotationY + tiltY - points.rotation.y) * 0.12;
+  points.rotation.x += (rotationX + tiltX + Math.sin(clock.elapsedTime * 0.16) * 0.07 - points.rotation.x) * 0.12;
+
+  glow.material.opacity = 0.032 + Math.sin(clock.elapsedTime * 0.9) * 0.012;
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+updateStat();
+tick();
+setTimeout(() => document.getElementById('loading').classList.add('hide'), 700);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

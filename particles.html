@@ -137,8 +137,8 @@
    快捷键：1/2 切换项目（不论当前形态，一律回到对应粒子团） F=聚成所选 C/R=粒子团
    ═══════════════════════════════════════════════════════════════ */
 
-const PARTICLE_COUNT = 14000;
-const STAR_COUNT = 4200;          // 前 4200 个粒子用于构成五星（含轮廓描边）
+const PARTICLE_COUNT = 20000;
+const STAR_COUNT = 6400;          // 前 6400 个粒子用于构成五星（含轮廓描边与星尖）
 const PALETTE = {
   flag:   ['#de2910', '#ffde00'],   // 标准国旗红 / 五星黄
   rose:   ['#ff4d6d', '#ffd6e0'],
@@ -304,15 +304,24 @@ function sampleStarEdge(star, out) {
   const t = Math.random();
   const nx = -(b[1] - a[1]) / (lens[ei] || 1);
   const ny = (b[0] - a[0]) / (lens[ei] || 1);
-  const j = (Math.random() - 0.5) * 0.36;
+  const j = (Math.random() - 0.5) * 0.1;    // 极细抖动 → 边缘更锐利
   out[0] = a[0] + (b[0] - a[0]) * t + nx * j;
   out[1] = a[1] + (b[1] - a[1]) * t + ny * j;
 }
 
-// 大星与小星的粒子配额：大幅提高，描边占 62% 让轮廓清晰
+/** 星尖：直接落在 10 个顶点附近（极细抖动）→ 五个角更锐利 */
+function sampleStarTip(star, out) {
+  const poly = star.poly;
+  const v = poly[(Math.random() * poly.length) | 0];
+  out[0] = v[0] + (Math.random() - 0.5) * 0.1;
+  out[1] = v[1] + (Math.random() - 0.5) * 0.1;
+}
+
+// 大星与小星的粒子配额：描边占 62% 让轮廓清晰，其中前 8% 落在星尖
 const EDGE_RATIO = 0.62;
-const BIG_N = 2600;
-const SMALL_N = [400, 400, 400, 400];   // 2600+1600 = 4200 = STAR_COUNT
+const TIP_RATIO = 0.08;
+const BIG_N = 4000;
+const SMALL_N = [600, 600, 600, 600];   // 4000+2400 = 6400 = STAR_COUNT
 
 /** 粒子索引 → 所属星（仅前 STAR_COUNT 个） */
 function starOfIndex(i) {
@@ -330,10 +339,11 @@ function makeFlag(i, out) {
     const st = starOfIndex(i);
     // 描边粒子在前（每颗星的前 EDGE_RATIO 部分），内部填充在后
     const withinStar = i < BIG_N ? i : i - BIG_N;
-    const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / 400))];
+    const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / SMALL_N[0]))];
     const local = withinStar - Math.floor(withinStar / segLen) * segLen;
-    if (local < segLen * EDGE_RATIO) sampleStarEdge(st, out);
-    else sampleStar(st, out);
+    if (local < segLen * TIP_RATIO) sampleStarTip(st, out);        // 星尖
+    else if (local < segLen * EDGE_RATIO) sampleStarEdge(st, out); // 描边
+    else sampleStar(st, out);                                      // 内部填充
     out[2] = (Math.random() - 0.5) * 3.4;      // 星的厚度 → 立体
   } else {
     sampleField(out);
@@ -444,9 +454,10 @@ function recolor() {
       c = i < STAR_COUNT ? colorB.clone() : colorA.clone();
       // 描边粒子提亮，让轮廓更醒目；填充与旗面保持轻微明暗颗粒感
       const withinStar = i < BIG_N ? i : i - BIG_N;
-      const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / 400))];
+      const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / SMALL_N[0]))];
       const local = withinStar - Math.floor(withinStar / segLen) * segLen;
-      if (i < STAR_COUNT && local < segLen * EDGE_RATIO) c.multiplyScalar(1.25 + Math.random() * 0.25);
+      if (i < STAR_COUNT && local < segLen * TIP_RATIO) c.multiplyScalar(1.45 + Math.random() * 0.2);
+      else if (i < STAR_COUNT && local < segLen * EDGE_RATIO) c.multiplyScalar(1.25 + Math.random() * 0.25);
       else c.multiplyScalar(0.86 + Math.random() * 0.28);
     } else if (currentShape === 'emblem') {
       // 党徽：专用金色，不与旗红混合（明暗颗粒感保留）
@@ -466,13 +477,17 @@ function recolor() {
 recolor();
 for (let i = 0; i < PARTICLE_COUNT; i++) {
   if (i < STAR_COUNT) {
-    // 描边粒子更小更集中 → 线条锐利；内部填充稍大 → 星体饱满
+    // 星尖更小更亮 → 角锐利；描边次之；内部填充稍大 → 星体饱满
+    const st = starOfIndex(i);
+    const starScale = 0.55 + 0.45 * Math.min(1, st.R / 6);   // 小星用更细的颗粒
     const withinStar = i < BIG_N ? i : i - BIG_N;
-    const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / 400))];
+    const segLen = i < BIG_N ? BIG_N : SMALL_N[Math.min(3, Math.floor((i - BIG_N) / SMALL_N[0]))];
     const local = withinStar - Math.floor(withinStar / segLen) * segLen;
-    sizes[i] = local < segLen * EDGE_RATIO ? 0.42 + Math.random() * 0.5 : 0.6 + Math.random() * 0.9;
+    if (local < segLen * TIP_RATIO) sizes[i] = (0.26 + Math.random() * 0.16) * starScale;
+    else if (local < segLen * EDGE_RATIO) sizes[i] = (0.34 + Math.random() * 0.36) * starScale;
+    else sizes[i] = (0.58 + Math.random() * 0.8) * starScale;
   } else {
-    sizes[i] = 0.55 + Math.random() * 1.35;   // 旗面
+    sizes[i] = 0.55 + Math.random() * 1.3;   // 旗面
   }
   seeds[i] = Math.random() * Math.PI * 2;
 }

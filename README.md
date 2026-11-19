@@ -16,8 +16,8 @@
 - **五星红旗** —— 按国标 30×20 网格布点
 - **党徽** —— 镰刀锤头轮廓，掩码直接内嵌在代码里
 
-除手势识别需要联网加载 MediaPipe 外，其余全部本地运行：Three.js 与 OrbitControls
-已放在 `vendor/`，党徽轮廓不读取任何外部图片，双击 HTML 就能离线打开。
+全部本地运行：Three.js、OrbitControls 与 MediaPipe Hands 都放在 `vendor/`，党徽轮廓不读取
+任何外部图片——断网、双击 HTML 也能完整使用（手势只需授予浏览器摄像头权限）。
 
 ## 亮点
 
@@ -54,7 +54,8 @@
 
     particles.html
 
-手势识别走 CDN，首次使用「启动手势」时需要联网，并允许浏览器访问摄像头。
+MediaPipe 已随包放在 `vendor/mediapipe/`，不需要联网；首次使用「启动手势」时允许浏览器访问
+摄像头即可。
 
 **方式二，本地起静态服务**（推荐，避免个别浏览器对本地文件的限制）
 
@@ -76,7 +77,14 @@
     ├── README.md
     └── vendor/
         ├── three.min.js           Three.js（本地自带）
-        └── OrbitControls.iife.js  轨道控制器（滚轮缩放 / 拖动翻转 / 右键平移）
+        ├── OrbitControls.iife.js  轨道控制器（滚轮缩放 / 拖动翻转 / 右键平移）
+        └── mediapipe/             MediaPipe Hands（本地化，手势离线可用）
+            ├── hands.js
+            ├── camera_utils.js
+            ├── hands.binarypb
+            ├── hands_solution_packed_assets.data
+            ├── hands_solution_simd_wasm_bin.wasm
+            └── hand_landmark_lite.tflite
 
 ## 技术要点
 
@@ -92,10 +100,10 @@
 
 ## 已知限制
 
-- 手势识别依赖 `@mediapipe/hands` 的 CDN 资源（版本号已锁定），纯离线环境下只有键盘与
-  鼠标交互可用。
+- 手势需要浏览器摄像头权限；光线不足、手离镜头太远或被遮挡时识别会不稳定（页面左下的
+  调试面板会实时显示检测到的手数与伸展度，可据此调整）。
 - 需要支持 WebGL 的现代浏览器。
-- 手势参数针对 320×240、`modelComplexity: 0` 调过；光线不足或手离镜头太远时会不稳定。
+- 手势参数针对 320×240、`modelComplexity: 0` 调过。
 
 ## License
 

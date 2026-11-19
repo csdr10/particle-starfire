@@ -14,6 +14,11 @@ const MIME = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.svg': 'image/svg+xml',
+  '.wasm': 'application/wasm',
+  '.data': 'application/octet-stream',
+  '.tflite': 'application/octet-stream',
+  '.binarypb': 'application/octet-stream',
+  '.task': 'application/octet-stream',
 };
 
 http.createServer((req, res) => {

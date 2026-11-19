@@ -127,8 +127,8 @@
 
 <script src="./vendor/three.min.js"></script>
 <script src="./vendor/OrbitControls.iife.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script src="./vendor/mediapipe/camera_utils.js"></script>
+<script src="./vendor/mediapipe/hands.js"></script>
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
@@ -736,9 +736,13 @@ function onResults(res) {
 }
 
 /* ── 启动 / 关闭 ── */
+let gestureSending = false;   // 帧背压：上一帧还在推理就丢新帧，避免排队卡死
+let gestureWarned = false;
+
 async function startGesture() {
   if (gestureOn) {
     gestureOn = false;
+    gestureSending = false;
     if (mpCamera) { try { mpCamera.stop(); } catch (e) {} }
     if (camVideo.srcObject) { camVideo.srcObject.getTracks().forEach(t => t.stop()); camVideo.srcObject = null; }
     camWrap.classList.remove('on');
@@ -750,29 +754,57 @@ async function startGesture() {
   }
   try {
     gestureOn = true;
+    gestureWarned = false;
+    gestureSending = false;
     gestureBtn.classList.add('on');
     gestureBtn.textContent = '✋ 手势开启中';
     document.getElementById('debug').style.display = 'block';
-    showPill('加载模型…');
+    showPill('正在加载识别模型…');
+    // 模型与 WASM 已放在 vendor/mediapipe/，离线可用
     hands = new Hands({
-      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`,
+      locateFile: (f) => `./vendor/mediapipe/${f}`,
     });
     // 回退到已验证可用的配置：轻量模型 + 低分辨率。
     // （曾尝试 modelComplexity:1 / 640×480 提升双手检测，实际导致识别整体失效）
     hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.45 });
     hands.onResults(onResults);
+
+    // 预热：先用一张空白图跑通模型，把「模型缺失 / WASM 加载失败」立刻暴露出来，
+    // 而不是等到摄像头打开后才静默失败。
+    const warm = document.createElement('canvas');
+    warm.width = 64; warm.height = 64;
+    warm.getContext('2d').fillRect(0, 0, 64, 64);
+    await hands.send({ image: warm });
+
+    showPill('正在请求摄像头…');
     mpCamera = new Camera(camVideo, {
-      onFrame: async () => { if (gestureOn && hands) await hands.send({ image: camVideo }); },
+      onFrame: async () => {
+        if (!gestureOn || !hands || gestureSending) return;
+        gestureSending = true;
+        try {
+          await hands.send({ image: camVideo });
+        } catch (err) {
+          if (!gestureWarned) { gestureWarned = true; showPill('⚠ 识别异常，请关闭后重试'); }
+        } finally {
+          gestureSending = false;
+        }
+      },
       width: 320, height: 240,
     });
     await mpCamera.start();
-    showPill('✋ 手势已开启 · 请抬手');
+    showPill('✋ 手势已开启 · 请把手抬到画面中');
   } catch (e) {
     gestureOn = false;
+    gestureSending = false;
     camWrap.classList.remove('on');
     gestureBtn.classList.remove('on');
     gestureBtn.textContent = '✋ 启动手势';
-    showPill('⚠ 启动失败 ' + String(e.message || e).slice(0, 30));
+    const name = (e && e.name) || '';
+    const msg = name === 'NotAllowedError' ? '摄像头权限被拒绝（地址栏允许后重试）'
+      : name === 'NotFoundError' ? '没有检测到摄像头'
+      : name === 'NotReadableError' ? '摄像头被其他程序占用'
+      : String((e && e.message) || e).slice(0, 40);
+    showPill('⚠ ' + msg);
   }
 }
 

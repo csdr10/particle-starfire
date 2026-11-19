@@ -582,6 +582,14 @@ const pill = document.getElementById('status-pill');
 
 let hands = null, mpCamera = null, gestureOn = false;
 
+/* 直接双击（file://）时，浏览器禁止 fetch 本地模型文件（会报 Failed to fetch），
+   这里自动回退到在线模型；通过 http(s) 打开时全部走本地 vendor/mediapipe。
+   手势的最佳方式仍是本地起服务：node server.js → http://127.0.0.1:8813/ */
+const IS_FILE = location.protocol === 'file:';
+const MP_BASE = IS_FILE
+  ? 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/'
+  : './vendor/mediapipe/';
+
 function showPill(text) {
   pill.textContent = text;
   pill.classList.add('show');
@@ -759,22 +767,24 @@ async function startGesture() {
     gestureBtn.classList.add('on');
     gestureBtn.textContent = '✋ 手势开启中';
     document.getElementById('debug').style.display = 'block';
-    showPill('正在加载识别模型…');
+    showPill(IS_FILE ? '双击打开：正在加载在线模型…' : '正在加载识别模型…');
     // 模型与 WASM 已放在 vendor/mediapipe/，离线可用
     hands = new Hands({
-      locateFile: (f) => `./vendor/mediapipe/${f}`,
+      locateFile: (f) => MP_BASE + f,
     });
     // 回退到已验证可用的配置：轻量模型 + 低分辨率。
     // （曾尝试 modelComplexity:1 / 640×480 提升双手检测，实际导致识别整体失效）
     hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.45 });
     hands.onResults(onResults);
 
-    // 预热：先用一张空白图跑通模型，把「模型缺失 / WASM 加载失败」立刻暴露出来，
-    // 而不是等到摄像头打开后才静默失败。
-    const warm = document.createElement('canvas');
-    warm.width = 64; warm.height = 64;
-    warm.getContext('2d').fillRect(0, 0, 64, 64);
-    await hands.send({ image: warm });
+    // 预热：先用一张空白图跑通模型，把「模型缺失 / WASM 加载失败」立刻暴露出来。
+    // file:// 下模型走 CDN，预热会让摄像头等待十几秒，因此跳过，直接开摄像头后台加载。
+    if (!IS_FILE) {
+      const warm = document.createElement('canvas');
+      warm.width = 64; warm.height = 64;
+      warm.getContext('2d').fillRect(0, 0, 64, 64);
+      await hands.send({ image: warm });
+    }
 
     showPill('正在请求摄像头…');
     mpCamera = new Camera(camVideo, {
@@ -784,7 +794,10 @@ async function startGesture() {
         try {
           await hands.send({ image: camVideo });
         } catch (err) {
-          if (!gestureWarned) { gestureWarned = true; showPill('⚠ 识别异常，请关闭后重试'); }
+          if (!gestureWarned) {
+            gestureWarned = true;
+            showPill(IS_FILE ? '⚠ 在线模型加载失败：用 node server.js 启动后访问' : '⚠ 识别异常，请关闭后重试');
+          }
         } finally {
           gestureSending = false;
         }
@@ -803,6 +816,8 @@ async function startGesture() {
     const msg = name === 'NotAllowedError' ? '摄像头权限被拒绝（地址栏允许后重试）'
       : name === 'NotFoundError' ? '没有检测到摄像头'
       : name === 'NotReadableError' ? '摄像头被其他程序占用'
+      : (IS_FILE && /fetch|failed/i.test(String((e && e.message) || e)))
+        ? '双击打开时模型被浏览器拦截，请用 node server.js 启动后访问'
       : String((e && e.message) || e).slice(0, 40);
     showPill('⚠ ' + msg);
   }

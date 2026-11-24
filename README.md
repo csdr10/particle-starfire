@@ -64,6 +64,9 @@ MediaPipe 已随包放在 `vendor/mediapipe/`，不需要联网；首次使用�
     node server.js
     # 然后打开 http://127.0.0.1:8813/   （根路径会自动跳到粒子页）
 
+Windows 用户也可以直接双击 `启动.bat`：会自动找到 Node.js、最小化启动服务并打开页面；
+服务已在运行时则只打开页面。关掉标题为 `Particle Starfire Server` 的窗口即可停止服务。
+
 **方式三，静态托管**
 
 把整个目录作为静态站点发布即可（例如 GitHub Pages）。根目录的 `index.html`
@@ -74,6 +77,7 @@ MediaPipe 已随包放在 `vendor/mediapipe/`，不需要联网；首次使用�
     .
     ├── index.html         入口跳转页（站点根路径 / Pages 首页自动进入主页面）
     ├── particles.html     粒子交互主页面（全部逻辑都在这一个文件里）
+    ├── 启动.bat           Windows 双击启动（自动起服务并打开页面）
     ├── server.js          本地静态服务器（127.0.0.1:8813，响应带 no-store）
     ├── preview.png        README 预览图（页面实拍）
     ├── README.md
